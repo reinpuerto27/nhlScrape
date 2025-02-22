@@ -4,22 +4,18 @@ import pandas as pd
 from bs4 import BeautifulSoup
 import re
 
-st.title("🏒 NHL Scraper - Upload Multiple HTML Files")
+st.title("🏒 NHL Scraper")
 
 def extract_values_from_html(file, filename):
     soup = BeautifulSoup(file, 'html.parser')
     
-    # Extract date from the "saved from url" or use filename
     url_comment = soup.find(string=re.compile("saved from url"))
     match = re.search(r'(\d{4}-\d{2}-\d{2})', url_comment) if url_comment else None
-    game_date = match.group(1) if match else filename  # Use filename as fallback
-    
-    st.write(f"📅 Extracted Date: {game_date}")
+    game_date = match.group(1) if match else filename
 
     data = []
     
     game_rows = soup.find_all('th', class_='text-center align-middle')
-    st.write(f"Found {len(game_rows)} games")
     
     game_details = []
     
@@ -92,3 +88,6 @@ if uploaded_files:
         all_data.extend(file_data)
     
     df = pd.DataFrame(all_data, columns=["Date", "Home Team", "Away Team", "Home Odds", "Away Odds", "User", "Pick", "Result", "Pick Profit", "Result Profit"])
+    
+    st.write("### 📊 Scraped Results")
+    st.dataframe(df, use_container_width=True)
