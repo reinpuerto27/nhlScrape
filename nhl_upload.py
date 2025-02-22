@@ -92,10 +92,3 @@ if uploaded_files:
         all_data.extend(file_data)
     
     df = pd.DataFrame(all_data, columns=["Date", "Home Team", "Away Team", "Home Odds", "Away Odds", "User", "Pick", "Result", "Pick Profit", "Result Profit"])
-    
-    st.write("### 📊 Scraped Results")
-    st.dataframe(df, height=600, use_container_width=True)
-
-    # Optionally, allow user to download the results as CSV
-    csv = df.to_csv(index=False).encode('utf-8')
-    st.download_button("Download CSV", data=csv, file_name="nhl_scraped_data.csv", mime="text/csv")
