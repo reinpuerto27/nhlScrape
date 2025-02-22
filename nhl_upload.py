@@ -4,14 +4,15 @@ import pandas as pd
 from bs4 import BeautifulSoup
 import re
 
-st.title("🏒 NHL Scraper - Upload HTML File")
+st.title("🏒 NHL Scraper - Upload Multiple HTML Files")
 
-def extract_values_from_html(file):
+def extract_values_from_html(file, filename):
     soup = BeautifulSoup(file, 'html.parser')
     
+    # Extract date from the "saved from url" or use filename
     url_comment = soup.find(string=re.compile("saved from url"))
     match = re.search(r'(\d{4}-\d{2}-\d{2})', url_comment) if url_comment else None
-    game_date = match.group(1) if match else "Unknown Date"
+    game_date = match.group(1) if match else filename  # Use filename as fallback
     
     st.write(f"📅 Extracted Date: {game_date}")
 
@@ -24,7 +25,7 @@ def extract_values_from_html(file):
     
     for row in game_rows:
         logo_imgs = row.find_all('img')
-        logos = [os.path.basename(img['src']).replace('.png', '') if img and 'whole_files' in img['src'] else 'N/A' for img in logo_imgs]
+        logos = [os.path.basename(img['src']).replace('.png', '') if img and img['src'].endswith('.png') else 'N/A' for img in logo_imgs]
 
         odds_divs = row.find_all('div', class_='pointer header-row-data height-small font-small')
         odds = [div.get_text(strip=True).replace('+', '') if div else 'N/A' for div in odds_divs]
@@ -38,7 +39,6 @@ def extract_values_from_html(file):
         scores = [div.get_text(strip=True) for div in scores_divs] if scores_divs else ['N/A', 'N/A']
         
         winner_team = logos[0] if len(scores) == 2 and int(scores[0]) > int(scores[1]) else logos[1] if len(logos) == 2 else 'Draw'
-        
         game_details.append((logos[0], logos[1], odds[0], odds[1], winner_team))
     
     user_rows = soup.find_all('tr')
@@ -48,9 +48,22 @@ def extract_values_from_html(file):
     for user_row in user_rows:
         username_div = user_row.find('td', class_='username-container')
         username = username_div.get_text(strip=True) if username_div else "Unknown User"
-        
-        pick_imgs = user_row.find_all('img')
-        pick_teams = [os.path.basename(img['src']).replace('.png', '') for img in pick_imgs if len(os.path.basename(img['src'])) == 7 and img['src'].endswith('.png')]
+
+        pick_cells = user_row.find_all('td', class_=re.compile(r'static-picks-col-width'))
+        pick_teams = []
+
+        for cell in pick_cells:
+            img = cell.find('img')
+            if img:
+                team_abbr = os.path.basename(img['src']).replace('.png', '')
+            else:
+                no_pick_div = cell.find('div', class_="no-pick d-flex justify-content-center")
+                team_abbr = "N/A" if no_pick_div else "Unknown"
+
+            pick_teams.append(team_abbr)
+
+        while len(pick_teams) < len(game_details):
+            pick_teams.append("N/A")
         
         if username != "Unknown User" and len(pick_teams) == len(game_details):
             user_data.append((username, pick_teams))
@@ -66,14 +79,23 @@ def extract_values_from_html(file):
                 pick_profit = 100 * (game[3] / 100) if game[3] > 0 else 100 / (abs(game[3]) / 100)
             
             result_profit = pick_profit if pick_team == game[4] else -100 if game[4] != "Draw" else 0
-            
             data.append([game_date, game[0], game[1], game[2], game[3], user, pick_team, game[4], round(pick_profit, 2), round(result_profit, 2)])
 
-    return pd.DataFrame(data, columns=["Date", "Home Team", "Away Team", "Home Odds", "Away Odds", "User", "Pick", "Result", "Pick Profit", "Result Profit"])
+    return data
 
-uploaded_file = st.file_uploader("Upload NHL HTML file", type=["html"])
+uploaded_files = st.file_uploader("Upload NHL HTML files", type=["html"], accept_multiple_files=True)
 
-if uploaded_file:
-    df = extract_values_from_html(uploaded_file)
+if uploaded_files:
+    all_data = []
+    for uploaded_file in uploaded_files:
+        file_data = extract_values_from_html(uploaded_file, uploaded_file.name)
+        all_data.extend(file_data)
+    
+    df = pd.DataFrame(all_data, columns=["Date", "Home Team", "Away Team", "Home Odds", "Away Odds", "User", "Pick", "Result", "Pick Profit", "Result Profit"])
+    
     st.write("### 📊 Scraped Results")
     st.dataframe(df, height=600, use_container_width=True)
+
+    # Optionally, allow user to download the results as CSV
+    csv = df.to_csv(index=False).encode('utf-8')
+    st.download_button("Download CSV", data=csv, file_name="nhl_scraped_data.csv", mime="text/csv")
