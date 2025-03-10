@@ -1,6 +1,11 @@
 import streamlit as st
 import os
 import pandas as pd
+import numpy as np
+import xgboost as xgb
+from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import LabelEncoder
+from sklearn.metrics import accuracy_score
 from bs4 import BeautifulSoup
 import re
 
@@ -89,5 +94,35 @@ if uploaded_files:
     
     df = pd.DataFrame(all_data, columns=["Date", "Home Team", "Away Team", "Home Odds", "Away Odds", "User", "Pick", "Result", "Pick Profit", "Result Profit"])
     
-    st.write("### 📊 Scraped Results")
+    st.write("📊 Scraped Results")
     st.dataframe(df, use_container_width=True)
+
+    if st.button("Predict Winner"):
+            df_original = df[["Date", "Home Team", "Away Team", "Result"]]
+            df = df.drop(columns=["Date"], errors="ignore")
+
+            label_encoders = {}
+            for col in ["Home Team", "Away Team", "User"]:
+                le = LabelEncoder()
+                df[col] = le.fit_transform(df[col])
+                label_encoders[col] = le
+
+            X = df[["Home Team", "Away Team", "Home Odds", "Away Odds", "User"]]
+            y = label_encoders["Home Team"].fit_transform(df["Result"])
+            X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+
+            model = xgb.XGBClassifier(use_label_encoder=False, eval_metric='mlogloss')
+            model.fit(X_train, y_train)
+            df["Predicted Result"] = model.predict(X)
+            df["Predicted Result"] = label_encoders["Home Team"].inverse_transform(df["Predicted Result"])
+
+            df_output = df_original.copy()
+            df_output["Predicted Result"] = df["Predicted Result"]
+            df_output = df_output.groupby("Date").first().reset_index()
+
+            y_pred = model.predict(X_test)
+            accuracy = accuracy_score(y_test, y_pred)
+            st.write(f"Model Accuracy: {accuracy * 100:.2f}%")
+
+            st.write("Predicted Winners:")
+            st.dataframe(df_output)
