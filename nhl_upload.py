@@ -8,26 +8,38 @@ from sklearn.preprocessing import LabelEncoder
 from sklearn.metrics import accuracy_score
 from bs4 import BeautifulSoup
 import re
+import quopri
 
 st.title("🏒 NHL Scraper")
 
 def extract_values_from_html(file, filename):
-    soup = BeautifulSoup(file, 'html.parser')
+    raw_data = file.read()
+    decoded_html = quopri.decodestring(raw_data).decode('utf-8', errors='ignore')
     
-    url_comment = soup.find(string=re.compile("saved from url"))
-    match = re.search(r'(\d{4}-\d{2}-\d{2})', url_comment) if url_comment else None
-    game_date = match.group(1) if match else filename
+    soup = BeautifulSoup(decoded_html, 'html.parser')
+    
+    subject_tag = soup.find(string=re.compile(r"Subject:\s+NFL Pickwatch - Week \d+ \d{4}"))
+    match = re.search(r'Week \d+ \d{4}', subject_tag)
+    game_date = match.group(0) if match else filename
 
     data = []
     
     game_rows = soup.find_all('th', class_='text-center align-middle')
+    st.write("Found game rows:", len(game_rows))
     
     game_details = []
     
     for row in game_rows:
-        logo_imgs = row.find_all('img')
-        logos = [os.path.basename(img['src']).replace('.png', '') if img and img['src'].endswith('.png') else 'N/A' for img in logo_imgs]
-
+        logo_imgs = row.find_all('svg')
+        use_tags = row.find_all('use')
+        logos = []
+        for use_tag in use_tags:
+            href = use_tag.get('href') or use_tag.get('xlink:href')
+            if href:
+                match = re.search(r'#i-([a-z]+)', href)
+                if match:
+                    logos.append(match.group(1) if match else 'N/A')
+        
         odds_divs = row.find_all('div', class_='pointer header-row-data height-small font-small')
         odds = [div.get_text(strip=True).replace('+', '') if div else 'N/A' for div in odds_divs]
 
@@ -40,8 +52,9 @@ def extract_values_from_html(file, filename):
         scores = [div.get_text(strip=True) for div in scores_divs] if scores_divs else ['N/A', 'N/A']
         
         winner_team = logos[0] if len(scores) == 2 and int(scores[0]) > int(scores[1]) else logos[1] if len(logos) == 2 else 'Draw'
+
         game_details.append((logos[0], logos[1], odds[0], odds[1], winner_team))
-    
+
     user_rows = soup.find_all('tr')
 
     user_data = []
@@ -50,23 +63,24 @@ def extract_values_from_html(file, filename):
         username_div = user_row.find('td', class_='username-container')
         username = username_div.get_text(strip=True) if username_div else "Unknown User"
 
-        pick_cells = user_row.find_all('td', class_=re.compile(r'static-picks-col-width'))
+        pick_cell_use = user_row.find_all('use')
         pick_teams = []
 
-        for cell in pick_cells:
-            img = cell.find('img')
+        for cell in pick_cell_use:
+            img = cell.get('href') or cell.get('xlink:href')
             if img:
-                team_abbr = os.path.basename(img['src']).replace('.png', '')
+                team_abbr = re.search(r'#i-([a-z]+)', img)
+                if team_abbr:
+                    pick_teams.append(team_abbr.group(1))
+                else:
+                    pick_teams.append('N/A')
             else:
-                no_pick_div = cell.find('div', class_="no-pick d-flex justify-content-center")
-                team_abbr = "N/A" if no_pick_div else "Unknown"
-
-            pick_teams.append(team_abbr)
+                pick_teams.append('N/A')
 
         while len(pick_teams) < len(game_details):
             pick_teams.append("N/A")
         
-        if username != "Unknown User" and len(pick_teams) == len(game_details):
+        if username not in ["Unknown User", "My PicksFind me"] and len(pick_teams) == len(game_details):
             user_data.append((username, pick_teams))
 
     for user, pick_teams in user_data:
@@ -84,7 +98,7 @@ def extract_values_from_html(file, filename):
 
     return data
 
-uploaded_files = st.file_uploader("Upload NHL HTML files", type=["html"], accept_multiple_files=True)
+uploaded_files = st.file_uploader("Upload NHL MHTML files", type=["mhtml"], accept_multiple_files=True)
 
 if uploaded_files:
     all_data = []
@@ -98,31 +112,30 @@ if uploaded_files:
     st.dataframe(df, use_container_width=True)
 
     if st.button("Predict Winner"):
-            df_original = df[["Date", "Home Team", "Away Team", "Result"]]
-            df = df.drop(columns=["Date"], errors="ignore")
+        df_original = df[["Date", "Home Team", "Away Team", "Result"]]
+        df = df.drop(columns=["Date"], errors="ignore")
 
-            label_encoders = {}
-            for col in ["Home Team", "Away Team", "User"]:
-                le = LabelEncoder()
-                df[col] = le.fit_transform(df[col])
-                label_encoders[col] = le
+        label_encoders = {}
+        for col in ["Home Team", "Away Team", "User"]:
+            le = LabelEncoder()
+            df[col] = le.fit_transform(df[col])
+            label_encoders[col] = le
 
-            X = df[["Home Team", "Away Team", "Home Odds", "Away Odds", "User"]]
-            y = label_encoders["Home Team"].fit_transform(df["Result"])
-            X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+        X = df[["Home Team", "Away Team", "Home Odds", "Away Odds", "User"]]
+        y = label_encoders["Home Team"].fit_transform(df["Result"])
+        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
 
-            model = xgb.XGBClassifier(use_label_encoder=False, eval_metric='mlogloss')
-            model.fit(X_train, y_train)
-            df["Predicted Result"] = model.predict(X)
-            df["Predicted Result"] = label_encoders["Home Team"].inverse_transform(df["Predicted Result"])
+        model = xgb.XGBClassifier(use_label_encoder=False, eval_metric='mlogloss')
+        model.fit(X_train, y_train)
+        df["Predicted Result"] = model.predict(X)
+        df["Predicted Result"] = label_encoders["Home Team"].inverse_transform(df["Predicted Result"])
 
-            df_output = df_original.copy()
-            df_output["Predicted Result"] = df["Predicted Result"]
-            df_output = df_output.groupby("Date").first().reset_index()
+        df_output = df_original.copy()
+        df_output["Predicted Result"] = df["Predicted Result"]
 
-            y_pred = model.predict(X_test)
-            accuracy = accuracy_score(y_test, y_pred)
-            st.write(f"Model Accuracy: {accuracy * 100:.2f}%")
+        y_pred = model.predict(X_test)
+        accuracy = accuracy_score(y_test, y_pred)
+        st.write(f"Model Accuracy: {accuracy * 100:.2f}%")
 
-            st.write("Predicted Winners:")
-            st.dataframe(df_output)
+        st.write("Predicted Winners:")
+        st.dataframe(df_output)
