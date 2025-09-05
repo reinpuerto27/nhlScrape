@@ -10,6 +10,7 @@ from bs4 import BeautifulSoup
 import re
 import quopri
 
+st.set_page_config(layout="wide")
 st.title("🏒 NHL Scraper")
 
 def extract_values_from_html(file, filename):
@@ -56,36 +57,87 @@ def extract_values_from_html(file, filename):
         game_details.append((logos[0], logos[1], odds[0], odds[1], winner_team))
 
     user_rows = soup.find_all('tr')
-
     user_data = []
 
     for user_row in user_rows:
         username_div = user_row.find('td', class_='username-container')
         username = username_div.get_text(strip=True) if username_div else "Unknown User"
 
-        pick_cell_use = user_row.find_all('use')
+        pick_cell_use = user_row.find_all('td', class_=re.compile(r'static-picks-col-width'))
         pick_teams = []
+        wage_bet = []
 
         for cell in pick_cell_use:
-            img = cell.get('href') or cell.get('xlink:href')
-            if img:
-                team_abbr = re.search(r'#i-([a-z]+)', img)
-                if team_abbr:
-                    pick_teams.append(team_abbr.group(1))
-                else:
-                    pick_teams.append('N/A')
-            else:
-                pick_teams.append('N/A')
+            use = None
+            svg = cell.find('svg', class_=re.compile(r'\bnfl-team-logo\b'))
+            if svg:
+                use = svg.find('use')
+            if not use:
+                use = cell.find('use')
+
+            team = 'N/A'
+            if use:
+                href = (use.get('href') or use.get('xlink:href') or '')
+                m = re.search(r'#i-([a-z]+)', href)
+                if m:
+                    team = m.group(1).lower()
+
+            pick_teams.append(team)
+        
+            span = cell.find('span', class_='badge table-stake-badge badge-light')
+            wage_bet.append(span.get_text(strip=True) if span else 'N/A')
+
+        stat_cells = user_row.find_all("div", class_="stat-value")
+        stats = [cell.get_text(strip=True) for cell in stat_cells]
+        weekly_record = stats[3] if len(stats) > 0 else "N/A"
+        if weekly_record and '-' in weekly_record:
+            parts = [p.strip() for p in weekly_record.split('-')]
+            weekly_wins = parts[0] if len(parts) > 0 else "0"
+            weekly_losses = parts[1] if len(parts) > 1 else "0"
+        else:
+            weekly_wins, weekly_losses = "0", "0"
+        weekly_ud = stats[6] if len(stats) > 1 else "N/A"
+        weekly_ls = stats[7] if len(stats) > 1 else "N/A"
+        if weekly_ls and '-' in weekly_ls:
+            parts_ls = [p.strip() for p in weekly_ls.split('-')]
+            ls_win = parts_ls[0] if len(parts_ls) > 0 else "0"
+            ls_loss = parts_ls[1] if len(parts_ls) > 1 else "0"
+        else:
+            ls_win, ls_loss = "0", "0"
+        weekly_lsud = stats[9] if len(stats) > 1 else "N/A"
+        weekly_l1 = stats[10] if len(stats) > 1 else "N/A"
+        if weekly_l1 and '-' in weekly_l1:
+            parts_l1 = [p.strip() for p in weekly_l1.split('-')]
+            l1_win = parts_l1[0] if len(parts_l1) > 0 else "0"
+            l1_loss = parts_l1[1] if len(parts_l1) > 1 else "0"
+        else:
+            l1_win, l1_loss = "0", "0"
+        weekly_ul2 = stats[12] if len(stats) > 1 else "N/A"
 
         while len(pick_teams) < len(game_details):
             pick_teams.append("N/A")
+            wage_bet.append("N/A")
         
         if username not in ["Unknown User", "My PicksFind me"] and len(pick_teams) == len(game_details):
-            user_data.append((username, pick_teams))
+            user_data.append((
+                username, 
+                pick_teams, 
+                wage_bet, 
+                weekly_wins, 
+                weekly_losses, 
+                weekly_ud, 
+                ls_win, 
+                ls_loss, 
+                weekly_lsud,
+                l1_win,
+                l1_loss,
+                weekly_ul2
+            ))
 
-    for user, pick_teams in user_data:
+    for user, pick_teams, wages, weekly_wins, weekly_losses, weekly_ud, ls_win, ls_loss, weekly_lsud, l1_win, l1_loss, weekly_ul2 in user_data:
         for i, game in enumerate(game_details):
             pick_team = pick_teams[i] if i < len(pick_teams) else "Unknown"
+            wage_val = wages[i] if i < len(wages) else "N/A"
             
             pick_profit = 0
             if pick_team == game[0]:
@@ -94,7 +146,28 @@ def extract_values_from_html(file, filename):
                 pick_profit = 100 * (game[3] / 100) if game[3] > 0 else 100 / (abs(game[3]) / 100)
             
             result_profit = pick_profit if pick_team == game[4] else -100 if game[4] != "Draw" else 0
-            data.append([game_date, game[0], game[1], game[2], game[3], user, pick_team, game[4], round(pick_profit, 2), round(result_profit, 2)])
+            data.append([
+                game_date, 
+                game[0], 
+                game[1], 
+                game[2], 
+                game[3], 
+                user, 
+                pick_team, 
+                wage_val, 
+                game[4], 
+                round(pick_profit, 2), 
+                round(result_profit, 2), 
+                weekly_wins, 
+                weekly_losses, 
+                weekly_ud, 
+                ls_win, 
+                ls_loss, 
+                weekly_lsud,
+                l1_win,
+                l1_loss,
+                weekly_ul2
+            ])
 
     return data
 
@@ -106,7 +179,28 @@ if uploaded_files:
         file_data = extract_values_from_html(uploaded_file, uploaded_file.name)
         all_data.extend(file_data)
     
-    df = pd.DataFrame(all_data, columns=["Date", "Home Team", "Away Team", "Home Odds", "Away Odds", "User", "Pick", "Result", "Pick Profit", "Result Profit"])
+    df = pd.DataFrame(all_data, columns=[
+        "Date", 
+        "Home Team", 
+        "Away Team", 
+        "Home Odds", 
+        "Away Odds", 
+        "User", 
+        "Pick", 
+        "Wage", 
+        "Result", 
+        "Pick Profit", 
+        "Result Profit", 
+        "Seaon Wins", 
+        "Season Loss", 
+        "Season UD", 
+        "Last Season Wins", 
+        "Last Season Loss", 
+        "Last Season UD",
+        "Lifetime Wins",
+        "Lifetime Loss",
+        "Lifetime UD"
+    ])
     
     st.write("📊 Scraped Results")
     st.dataframe(df, use_container_width=True)
