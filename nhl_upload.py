@@ -40,7 +40,7 @@ def extract_values_from_html(file, filename):
                 if match:
                     logos.append(match.group(1) if match else 'N/A')
         
-        odds_divs = row.find_all('div', class_='pointer header-row-data height-small font-small')
+        odds_divs = row.find_all('div', class_='header-row-data height-small text-nowrap')
         odds = [div.get_text(strip=True).replace('+', '') if div else 'N/A' for div in odds_divs]
 
         try:
