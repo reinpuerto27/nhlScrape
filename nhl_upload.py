@@ -191,7 +191,7 @@ if uploaded_files:
         "Result", 
         "Pick Profit", 
         "Result Profit", 
-        "Seaon Wins", 
+        "Season Wins", 
         "Season Loss", 
         "Season UD", 
         "Last Season Wins", 
